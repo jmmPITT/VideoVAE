@@ -2,40 +2,38 @@
 Main script to train the VideoVAE model.
 """
 import torch
+import argparse
+import os
 from video_vae.model import TransformerNetwork
-from video_vae.trainer import MovingMNISTDataset, TemporalAutoencoderTrainer, PerceptualLoss
+from video_vae.trainer import VideoDataset, TemporalAutoencoderTrainer
 
-if __name__ == '__main__':
-    # Set the environment variable to allow duplicate library loading
+def main(args):
+    # Set the environment variable to allow duplicate library loading.
+    # This is a workaround for a known issue with some environments where multiple
+    # OpenMP libraries can be loaded, causing a conflict.
     os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
 
-    # Paths to your models and dataset
-    npy_file = 'ucf101_subset_batch_6.npy'  # Path to your dataset
-
     # Instantiate the dataset
-    dataset = MovingMNISTDataset(npy_file)
+    dataset = VideoDataset(args.npy_file)
 
     # Instantiate the TransformerNetwork model
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-    transformer_model_path = 'transformer_model.pth'
 
-    # Load the trained Transformer model
-    transformer_model = TransformerNetwork(beta=1e-5).to(device)
+    transformer_model = TransformerNetwork(beta=args.learning_rate).to(device)
 
-    # Uncomment the following line to load a pre-trained model
-    # transformer_model.load_state_dict(torch.load(transformer_model_path, map_location=device))
+    if args.load_model:
+        print(f"Loading pre-trained model from {args.model_path}")
+        transformer_model.load_state_dict(torch.load(args.model_path, map_location=device))
 
     # Instantiate the trainer
     trainer = TemporalAutoencoderTrainer(
         transformer_model=transformer_model,
         dataset=dataset,
-        batch_size=1,
-        learning_rate=1e-5,
-        num_epochs=50
+        batch_size=args.batch_size,
+        learning_rate=args.learning_rate,
+        num_epochs=args.num_epochs,
+        model_save_path=args.model_path
     )
-
-    # Initialize perceptual loss for evaluation
-    perceptual_loss = PerceptualLoss().to(device)
 
     # Start training
     trainer.train()
@@ -43,3 +41,21 @@ if __name__ == '__main__':
     print("\nTraining complete.")
     print("The model has been trained with a perceptual loss component to improve visual quality.")
     print("Memory optimization with gradient checkpointing was used to allow for larger batch sizes.")
+
+if __name__ == '__main__':
+    parser = argparse.ArgumentParser(description="Train the VideoVAE model.")
+    parser.add_argument('--npy_file', type=str, required=True,
+                        help='Path to the processed .npy dataset file.')
+    parser.add_argument('--model_path', type=str, default='transformer_model.pth',
+                        help='Path to save or load the model.')
+    parser.add_argument('--batch_size', type=int, default=1,
+                        help='Batch size for training.')
+    parser.add_argument('--learning_rate', type=float, default=1e-5,
+                        help='Learning rate for the optimizer.')
+    parser.add_argument('--num_epochs', type=int, default=50,
+                        help='Number of training epochs.')
+    parser.add_argument('--load_model', action='store_true',
+                        help='Load a pre-trained model from the specified model_path.')
+
+    args = parser.parse_args()
+    main(args)
