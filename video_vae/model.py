@@ -8,12 +8,30 @@ import numpy as np
 import torch.nn.utils.rnn as rnn_utils
 import torch.utils.checkpoint as checkpoint
 import math
-from RVITS import *
-# torch.backends.cudnn.enabled = False
-
+from .components.encoder import ConvEncoder16x16
+from .components.attention import ModernTransformerBlock, LegacyTransformerBlock
+from .components.lstm import CustomLSTMCell
 
 
 class TransformerNetwork(nn.Module):
+    """
+    A comprehensive, multi-layered transformer-based network for video processing.
+
+    This network is designed to encode, decode, and generate video sequences
+    using a combination of convolutional encoders, custom LSTM cells with
+    integrated attention mechanisms, and both modern and legacy transformer
+    blocks. It is structured to handle high-dimensional video data by breaking
+    it down into patches and processing them through a hierarchical series of
+    layers.
+
+    The model is composed of three main parts:
+    1.  **Encoder**: Processes input video frames to produce a latent representation.
+    2.  **Decoder**: Reconstructs video frames from the latent representation.
+    3.  **Generator**: Generates new video frames from a learned distribution.
+
+    Gradient checkpointing is used extensively to manage memory consumption
+    during training.
+    """
     def __init__(self, beta, input_dims=32, hidden_dim=128, fc1_dims=64, fc2_dims=32, n_actions=4,
                  name='transformer', chkpt_dir='td3_MAT'):
         super(TransformerNetwork, self).__init__()
@@ -51,18 +69,23 @@ class TransformerNetwork(nn.Module):
         self.enc_embedding = nn.Parameter(torch.zeros(1, self.num_patch_one, self.dffEncoder))
 
         # Transformer encoder (assumed to be a nn.Module)
-        self.TFE1 = TransformerBlock4(
+        self.TFE1 = LegacyTransformerBlock(
             input_dims=self.dffEncoder,
             patch_length=self.num_patch_one,
             dff=self.dff1,
             dropout=dropout,
-            num_heads=16
+            num_heads=16,
+            num_context_tensors=4
         )
 
-        self.lstmE1 = CustomLSTMCell3(
+        self.lstmE1 = CustomLSTMCell(
             patch_size=self.num_patch_one,
             d_model=self.dffEncoder,
-            dff=self.dff1
+            dff=self.dff1,
+            attention_block=ModernTransformerBlock(
+                input_dims=self.dff1, patch_length=self.num_patch_one, dff=self.dff1,
+                dropout=0.1, num_heads=32, num_context_tensors=3
+            )
         )
 
 
@@ -140,10 +163,14 @@ class TransformerNetwork(nn.Module):
         # )
         # self.Epos21_embedding = nn.Parameter(torch.zeros(1, self.num_patch_one, 128))
 
-        self.lstmE2 = CustomLSTMCell2(
+        self.lstmE2 = CustomLSTMCell(
             patch_size=self.num_patch_two,
             d_model=self.dff2,
-            dff=self.dff2
+            dff=self.dff2,
+            attention_block=ModernTransformerBlock(
+                input_dims=self.dff2, patch_length=self.num_patch_two, dff=self.dff2,
+                dropout=0.1, num_heads=16, num_context_tensors=2
+            )
         )
 
         # self.norm_E23 = nn.LayerNorm(4*self.dff2)
@@ -196,10 +223,14 @@ class TransformerNetwork(nn.Module):
         self.norm_E31 = nn.LayerNorm(self.dff1)  # or LayerNorm, your preference
         self.act_E31 = nn.ReLU(inplace=True)
 
-        self.lstmE3 = CustomLSTMCell1(
+        self.lstmE3 = CustomLSTMCell(
             patch_size=self.num_patch_three,
             d_model=self.dff3,
-            dff=self.dff3
+            dff=self.dff3,
+            attention_block=ModernTransformerBlock(
+                input_dims=self.dff3, patch_length=self.num_patch_three, dff=self.dff3,
+                dropout=0.1, num_heads=8, num_context_tensors=1
+            )
         )
 
         # self.norm_E34 = nn.LayerNorm(4*self.dff3)
@@ -267,10 +298,14 @@ class TransformerNetwork(nn.Module):
         # )
         # self.Epos41_embedding = nn.Parameter(torch.zeros(1, self.num_patch_one, 64))
 
-        self.lstmE4 = CustomLSTMCell0(
+        self.lstmE4 = CustomLSTMCell(
             patch_size=self.num_patch_four,
             d_model=self.dff4,
-            dff=self.dff4
+            dff=self.dff4,
+            attention_block=ModernTransformerBlock(
+                input_dims=self.dff4, patch_length=self.num_patch_four, dff=self.dff4,
+                dropout=0.1, num_heads=4, num_context_tensors=0
+            )
         )
 
         ### Decoder ###
@@ -358,18 +393,23 @@ class TransformerNetwork(nn.Module):
 
 
         # Transformer encoder (assumed to be a nn.Module)
-        self.TFD1 = TransformerBlock6(
+        self.TFD1 = LegacyTransformerBlock(
             input_dims=self.input_dims,
             patch_length=self.num_patch_one,
             dff=self.dff1,
             dropout=dropout,
-            num_heads=10
+            num_heads=10,
+            num_context_tensors=6
         )
 
-        self.lstmD1 = CustomLSTMCell5(
+        self.lstmD1 = CustomLSTMCell(
             patch_size=self.num_patch_one,
             d_model=self.input_dims,
-            dff=self.dff1
+            dff=self.dff1,
+            attention_block=ModernTransformerBlock(
+                input_dims=self.dff1, patch_length=self.num_patch_one, dff=self.dff1,
+                dropout=0.1, num_heads=16, num_context_tensors=5
+            )
         )
 
         # self.norm_D12 = nn.LayerNorm(4*self.dff1)
@@ -399,10 +439,14 @@ class TransformerNetwork(nn.Module):
         self.norm_D21 = nn.LayerNorm(self.dff1)  # or LayerNorm, your preference
         self.act_D21 = nn.ReLU(inplace=True)
 
-        self.lstmD2 = CustomLSTMCell4(
+        self.lstmD2 = CustomLSTMCell(
             patch_size=self.num_patch_two,
             d_model=self.dff2,
-            dff=self.dff2
+            dff=self.dff2,
+            attention_block=ModernTransformerBlock(
+                input_dims=self.dff2, patch_length=self.num_patch_two, dff=self.dff2,
+                dropout=0.1, num_heads=8, num_context_tensors=4
+            )
         )
 
         # self.norm_D23 = nn.LayerNorm(4*self.dff2)
@@ -446,10 +490,14 @@ class TransformerNetwork(nn.Module):
         self.norm_D31 = nn.LayerNorm(self.dff1)  # or LayerNorm, your preference
         self.act_D31 = nn.ReLU(inplace=True)
 
-        self.lstmD3 = CustomLSTMCell3(
+        self.lstmD3 = CustomLSTMCell(
             patch_size=self.num_patch_three,
             d_model=self.dff3,
-            dff=self.dff3
+            dff=self.dff3,
+            attention_block=ModernTransformerBlock(
+                input_dims=self.dff3, patch_length=self.num_patch_three, dff=self.dff3,
+                dropout=0.1, num_heads=4, num_context_tensors=3
+            )
         )
 
         # self.norm_D34 = nn.LayerNorm(4*self.dff3)
@@ -508,22 +556,27 @@ class TransformerNetwork(nn.Module):
         self.norm_D41 = nn.LayerNorm(self.dff1)  # or LayerNorm, your preference
         self.act_D41 = nn.ReLU(inplace=True)
 
-        self.lstmD4 = CustomLSTMCell2(
+        self.lstmD4 = CustomLSTMCell(
             patch_size=self.num_patch_four,
             d_model=self.dff4,
-            dff=self.dff4
+            dff=self.dff4,
+            attention_block=ModernTransformerBlock(
+                input_dims=self.dff4, patch_length=self.num_patch_four, dff=self.dff4,
+                dropout=0.1, num_heads=2, num_context_tensors=2
+            )
         )
 
         ### Generator ###
         self.gen_embedding = nn.Parameter(torch.zeros(1, self.num_patch_one, self.input_dims))
 
         # Transformer encoder (assumed to be a nn.Module)
-        self.TFG1 = TransformerBlock5(
+        self.TFG1 = LegacyTransformerBlock(
             input_dims=self.input_dims,
             patch_length=self.num_patch_one,
             dff=self.dff1,
             dropout=dropout,
-            num_heads=10
+            num_heads=10,
+            num_context_tensors=5
         )
 
         self.conv_G12 = nn.Conv2d(
@@ -636,28 +689,44 @@ class TransformerNetwork(nn.Module):
         self.norm_G41 = nn.LayerNorm(self.dff1)  # or LayerNorm, your preference
         self.act_G41 = nn.ReLU(inplace=True)
 
-        self.lstmG1 = CustomLSTMCell4(
+        self.lstmG1 = CustomLSTMCell(
             patch_size=self.num_patch_one,
             d_model=self.input_dims,
-            dff=self.dff1
+            dff=self.dff1,
+            attention_block=ModernTransformerBlock(
+                input_dims=self.dff1, patch_length=self.num_patch_one, dff=self.dff1,
+                dropout=0.1, num_heads=10, num_context_tensors=4
+            )
         )
 
-        self.lstmG2 = CustomLSTMCell3(
+        self.lstmG2 = CustomLSTMCell(
             patch_size=self.num_patch_two,
             d_model=self.dff2,
-            dff=self.dff2
+            dff=self.dff2,
+            attention_block=ModernTransformerBlock(
+                input_dims=self.dff2, patch_length=self.num_patch_two, dff=self.dff2,
+                dropout=0.1, num_heads=8, num_context_tensors=3
+            )
         )
 
-        self.lstmG3 = CustomLSTMCell2(
+        self.lstmG3 = CustomLSTMCell(
             patch_size=self.num_patch_three,
             d_model=self.dff3,
-            dff=self.dff3
+            dff=self.dff3,
+            attention_block=ModernTransformerBlock(
+                input_dims=self.dff3, patch_length=self.num_patch_three, dff=self.dff3,
+                dropout=0.1, num_heads=4, num_context_tensors=2
+            )
         )
 
-        self.lstmG4 = CustomLSTMCell1(
+        self.lstmG4 = CustomLSTMCell(
             patch_size=self.num_patch_four,
             d_model=self.dff4,
-            dff=self.dff4
+            dff=self.dff4,
+            attention_block=ModernTransformerBlock(
+                input_dims=self.dff4, patch_length=self.num_patch_four, dff=self.dff4,
+                dropout=0.1, num_heads=2, num_context_tensors=1
+            )
         )
 
 
@@ -865,6 +934,24 @@ class TransformerNetwork(nn.Module):
         return Z, C1, C2, C3, C4
 
     def encoder(self, state, C1, C2, C3, C4, t):
+        """
+        Encodes a single time step of the input video sequence.
+
+        This method processes the input state through the hierarchical encoder
+        layers, updating the cell states of the custom LSTMs at each level.
+        It uses gradient checkpointing to reduce memory usage.
+
+        Args:
+            state (torch.Tensor): The input state for the current time step.
+            C1, C2, C3, C4 (torch.Tensor): The cell states from the previous
+                time step for each layer of the encoder.
+            t (int): The current time step.
+
+        Returns:
+            Tuple[torch.Tensor, ...]: A tuple containing the output of the
+                final encoder layer (Z) and the updated cell states (C1, C2,
+                C3, C4).
+        """
         # Use checkpointing for each transformer block to save memory
         batch_size = state.shape[0]
 
@@ -1069,7 +1156,23 @@ class TransformerNetwork(nn.Module):
         return out
 
     def generator_step(self, Z, CD1, CD2, CD3, CD4):
-        """Final transformations in decoder with checkpointed refinement loop."""
+        """
+        Performs the generator's refinement loop to produce the final output.
+
+        This method takes the initial state from the decoder and iteratively
+        refines it through a series of generator blocks. It uses gradient
+        checkpointing to manage memory during the refinement loop.
+
+        Args:
+            Z (torch.Tensor): The initial input tensor for the generator.
+            CD1, CD2, CD3, CD4 (torch.Tensor): The cell states from the
+                decoder, used as context for the generator.
+
+        Returns:
+            Tuple[torch.Tensor, ...]: A tuple containing the final generated
+                output and the updated generator cell states (CG1, CG2, CG3,
+                CG4).
+        """
         # --- Initial setup is identical to your code ---
         selected_embedding = self.gen_embedding
         batch_size = CD1.shape[0]
@@ -1118,6 +1221,24 @@ class TransformerNetwork(nn.Module):
         return out, CG1, CG2, CG3, CG4
 
     def decoder(self, ZMUlist, CE1, CE2, CE3, CE4, t):
+        """
+        Decodes a sequence of latent representations back into a video.
+
+        This method takes the final cell states from the encoder, samples from
+        the learned latent distribution, and then iteratively reconstructs the
+        video sequence in reverse time.
+
+        Args:
+            ZMUlist (torch.Tensor): The output from the final encoder layer.
+            CE1, CE2, CE3, CE4 (torch.Tensor): The final cell states from each
+                layer of the encoder.
+            t (int): The final time step from the encoding process.
+
+        Returns:
+            Tuple[torch.Tensor, ...]: A tuple containing the reconstructed
+                video sequence, the backward cell states for each layer, and the
+                mean and log variance for each layer's latent distribution.
+        """
         batch_size = CE1.shape[0]
         outBackwards = []
         C1_backwards = []
