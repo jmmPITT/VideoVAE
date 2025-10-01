@@ -1,0 +1,10 @@
+# Ignore downloaded and extracted dataset files
+UCF101.rar
+UCF101/
+
+# Ignore processed data files
+*.npy
+
+# Ignore Python cache
+__pycache__/
+*.pyc
